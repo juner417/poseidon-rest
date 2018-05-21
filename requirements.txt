@@ -1,0 +1,9 @@
+Django==1.10.5
+django-filter
+djangorestframework==3.5.3
+markdown
+jsonfield
+pexpect
+docker-py
+python-etcd
+django-rest-swagger

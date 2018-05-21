@@ -1,0 +1,109 @@
+{
+    "kind": "component",
+    "data": [
+	  {
+		"name": "flanneld",
+		"role": "minion",
+		"cluster": "cluster-32b1e3a0",
+		"opts": {
+		  "--etcd-endpoints": "http://172.19.136.122:4001",
+		  "--iface": "IP",
+		  "--ip-masq": "FLAG"
+		}
+	  },
+	  {
+		"name": "kube-proxy",
+		"role": "minion",
+		"cluster": "cluster-32b1e3a0",
+		"opts": {
+		  "--logtostderr": "true",
+		  "--master": "http://172.19.136.122:8080",
+		  "--hostname-override": "IP"
+		}
+	  },
+	  {
+		"name": "docker",
+		"role": "minion",
+		"cluster": "cluster-32b1e3a0",
+		"opts": {
+		  "--log-opt": [
+			"max-size=100m",
+			"max-file=4"
+		  ],
+		  "--storage-driver": "aufs",
+		  "--graph": "/data/docker",
+		  "--host": [
+			"tcp://0.0.0.0:4243",
+			"unix:///var/run/docker.sock"
+		  ],
+		  "--insecure-registry": [
+			"172.19.136.42:5000",
+			"172.19.136.122:5000"
+		  ]
+		}
+	  },
+	  {
+		"name": "kubelet",
+		"role": "minion",
+		"cluster": "cluster-32b1e3a0",
+		"opts": {
+		  "--cluster-dns": "192.168.3.10",
+		  "--root-dir": "/data/k8s/kubelet",
+		  "--api-servers": "http://172.19.136.122:8080",
+		  "--hostname-override": "IP",
+		  "--cluster-domain": "cluster.local",
+		  "--logtostderr": "true"
+		}
+	  },
+	  {
+		"name": "kube-apiserver",
+		"role": "master",
+		"cluster": "cluster-32b1e3a0",
+		"opts": {
+		  "--service-cluster-ip-range": "192.168.3.0/24",
+		  "--advertise-address": "172.19.136.122",
+		  "--client-ca-file": "/srv/kubernetes/ca.crt",
+		  "--tls-cert-file": "/srv/kubernetes/server.cert",
+		  "--tls-private-key-file": "/srv/kubernetes/server.key",
+		  "--etcd-servers": "http://172.19.136.122:4001",
+		  "--logtostderr": "true",
+		  "--insecure-port": "8080",
+		  "--insecure-bind-address": "0.0.0.0",
+		  "--service-node-port-range": "30000-32767",
+		  "--admission-control": "NamespaceLifecycle,LimitRanger,ServiceAccount,SecurityContextDeny,ResourceQuota"
+		}
+	  },
+	  {
+		"name": "kube-scheduler",
+		"role": "master",
+		"cluster": "cluster-32b1e3a0",
+		"opts": {
+		  "--logtostderr": "true",
+		  "--master": "127.0.0.1:8080"
+		}
+	  },
+	  {
+		"name": "kube-controller-manager",
+		"role": "master",
+		"cluster": "cluster-32b1e3a0",
+		"opts": {
+		  "--root-ca-file": "/srv/kubernetes/ca.crt",
+		  "--service-account-private-key-file": "/srv/kubernetes/server.key",
+		  "--master": "127.0.0.1:8080",
+		  "--logtostderr": "true"
+		}
+	  },
+	  {
+		"name": "etcd",
+		"role": "meta",
+		"cluster": "cluster-32b1e3a0",
+		"opts": {
+		  "--name": "infra",
+		  "--data-dir": "/data/infra-0",
+		  "--listen-client-urls": "http://127.0.0.1:4001,http://172.19.136.122:4001",
+		  "--advertise-client-urls": "http://172.19.136.122:4001",
+		  "--listen-peer-urls": "http://0.0.0.0:2380"
+		}
+	  }
+    ]
+}

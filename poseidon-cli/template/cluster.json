@@ -1,0 +1,26 @@
+{
+    "kind": "cluster",
+    "data": [
+        {
+            "name": "opedev",
+            "master" : "172.19.136.29",
+            "port" : "8080",
+            "proxy" : "172.19.136.41",
+            "cluster_engine" : "kubernetes",
+            "platform_info" : {
+                "platform": "openstack", 
+                "os": "ubuntu-14.04", 
+                "account" : "ubuntu", 
+                "registry" : "172.19.136.42:5000",
+                "box_version" : "v1.2"
+            },
+            "network_info" : {"Network":"172.16.0.0/16", "Backend": {"Type": "vxlan"} },
+            "metas" : ["172.19.136.43:4001", "172.19.136.44:4001", "172.19.136.45:4001"], 
+            "capacity_info": {
+                "cpu" : "80",
+                "memory" : "160", 
+                "nodes" : "10" },
+            "tags" : "opdev"
+        }
+    ]
+}

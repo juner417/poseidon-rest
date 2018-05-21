@@ -1,0 +1,4 @@
+kubelet,minion,--cluster-dns=192.168.3.10;--root-dir=/data/k8s/kubelet;--api-servers=http://172.19.136.122:8080;--hostname-override=IP;--cluster-domain=cluster.local;--logtostderr=true
+kube-proxy,minion,--logtostderr=true;--master=http://172.19.136.122:8080;--hostname-override=IP
+kubelet,minion,--etcd-endpoints=http://172.19.136.122:4001;--iface=IP;--ip-masq=FLAG
+docker,minion,--log-opt=[max-size=100m,max-file=4];--storage-driver=aufs;--graph=/data/docker;--host=[tcp://0.0.0.0:4243,unix:///var/run/docker.sock];--insecure-registry=[172.19.136.42:5000,172.19.136.122:5000]

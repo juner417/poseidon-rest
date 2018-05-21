@@ -1,0 +1,923 @@
+#!/usr/bin/env python
+#-*- coding: utf-8 -*-
+
+import datetime
+import json
+import os
+import re
+import sys
+import signal
+import traceback
+import urllib2
+import requests
+import readline
+from tabulate import tabulate
+
+
+class CliBase(object):
+    def __init__(self):
+        BASE_DIR = os.path.dirname(
+            os.path.abspath(__file__))
+        
+        self.version = 'v0.3'
+        self.apiserver = 'http://localhost:8000'
+        self.cluster = ''
+        self.node = ''
+        self.resource_type = ''
+        self.remain_res = 0
+        self.tempfilepath = os.path.join(BASE_DIR, 'template')
+        self.encoded_data = []
+        self.api_return_data = []
+        # uuid = {'resouce_name':[{'name':'id1'},{'name':'id2'}...],...}
+        self.uuid = {}
+
+
+    def swap(self, array, i, j):
+    
+        array[i], array[j] = array[j], array[i]
+
+        return array
+
+    def _apiClient(self, url, method, data):
+        # connect a session to self.apiserver
+        # and call a method using resource api with data args
+        # return request result
+
+        opener = urllib2.build_opener(urllib2.HTTPHandler)
+   
+        if method == 'GET' or method == 'DELETE':
+            body = None
+        else:
+            body = json.dumps(data)
+
+        req = urllib2.Request(url, body)
+        req.add_header('Content-Type', 'application/json')
+        req.get_method = lambda: method
+
+        try:
+            res = urllib2.urlopen(req)
+            result = json.loads(res.read())
+        except urllib2.HTTPError as e:
+            req = urllib2.Request(url, None)
+            req.add_header('Content-Type', 'application/json')
+            req.get_method = lambda: 'GET'
+
+            res = urllib2.urlopen(req)
+            result = json.loads(res.read())
+            
+            if type(result) is list:
+                for i in result:
+                    if str(i['name']) == str(data['name']):
+                        return_val = i
+
+            elif type(result) is str:
+                if 'message' in result.keys():
+                    return_val = result['message']
+
+            else:
+                if str(result['name']) == str(data['name']):
+                    return_val = result
+                
+            return res.code, return_val
+        else:
+            res.close()
+
+        return res.code, result
+
+    def do_use(self, url):
+        # check url validation
+        try:
+            res = requests.get(url)
+        except requests.exceptions.ConnectionError as e:
+            return False, [' %s Connection Error' % url]
+        else:
+            self.apiserver = url 
+            return True, [self.apiserver]
+
+    def set_resource(self, resource, uuid):
+        
+        if resource == 'cluster' and re.search('cluster-', uuid):
+            self.cluster = uuid
+        elif resource == 'node' and re.search('node-',uuid):
+            self.node = uuid
+        else:
+            out = '%s cannot set a resouce info' % resource
+            return False, [out]
+
+        return True, [uuid]
+
+    def unset_resource(self, resource):
+        
+        if resource == 'cluster':
+            self.cluster = ''
+        elif resource == 'node':
+            self.node = ''
+        else:
+            out = '%s cannot set a resouce info' % resource
+            return False, [out]
+        
+        out = '%s unsetting' % resource
+        return True, [out]
+
+    def generate_json(self, resource, file):
+        '''
+        read input file(resource.out)
+        change args
+        write file
+        '''
+        resource_template = resource + '.template.json'
+        now = datetime.datetime.now()
+       
+        try: 
+            input_f = open(os.path.join(self.tempfilepath,file),'r')
+            resource_info = input_f.readlines()
+            template_f = open(os.path.join(
+                self.tempfilepath,resource_template),'r')
+
+        except IOError as e:
+            input_f.close()
+            template_f.close()
+
+            return False, e
+
+        json_encoded_data = json.load(template_f)
+        json_encoded_data['cluster'] = unicode(self.cluster)
+        data_array = []
+
+        for line in resource_info:
+
+            tmp = line.strip('\n').split(',')
+            tmp_dict = {}
+
+            if resource == 'node':
+                host = tmp[0]
+                ip = tmp[1]
+                roles = tmp[2].split(';')
+
+                for k,v in json_encoded_data.items():
+                    if k == 'name' or k == 'host' :
+                        v = unicode(host)
+                    elif k == 'ipaddr':
+                        v = unicode(ip)
+                    elif k == 'roles':
+                        v = [unicode(x) for x in roles]
+                        
+                    tmp_dict[k] = v
+
+                data_array.append(tmp_dict)
+
+            elif resource == 'component':
+                componame = tmp[0]
+                role = tmp[1]
+                opts = tmp[2].split(';')
+
+                for k,v in json_encoded_data.items():
+                    if k == 'name':
+                        v = unicode(componame)
+                    elif k == 'role':
+                        v = unicode(role)
+                    elif k == 'opts':
+                        v = [unicode(x) for x in roles]
+                        
+                    tmp_dict[k] = v
+
+                data_array.append(tmp_dict)
+                
+        try:
+            output_file = resource + '-' + now.strftime('%H%M%S') + '.json'
+            output_f = open(os.path.join(self.tempfilepath, output_file),'w')
+        except IOError as e:
+            output_f.close()
+            return False, e
+
+        tmp_dict = {}
+        tmp_dict['kind'] = resource
+        tmp_dict['data'] = data_array
+
+        output_f.write(json.dumps(tmp_dict))
+
+        output_f.close()
+        template_f.close()
+        input_f.close()
+
+        return True, output_file
+
+    def _load_file(self, file):
+        """
+        loads a text file 
+        return res = [{no:name},{no:name},...] 
+        """
+
+        res_data = []
+        self.encoded_data = []
+        file_name = os.path.join(self.tempfilepath, file)
+
+        try:
+            f = open(file_name, 'r')
+            res = f.read().strip('\n')
+            data = json.loads(res)
+
+            self.resource_type = str(data['kind'])
+            self.encoded_data = data['data']
+        except IOError as e:
+            res_data.append('Unable to read file')
+            res_data += os.listdir(self.tempfilepath) 
+        except ValueError as e:
+            res_data.append('File: %s syntax error' % file_name)
+        else:
+            for i, val in enumerate(self.encoded_data):
+                tmp_dict = {}
+                tmp_dict[str(val['name'])] = i
+                res_data.append(tmp_dict)
+
+            f.close()
+
+        #return res_data
+        return len(self.encoded_data)
+
+    def _load_data(self, resource, column, status, uuid=None):
+        """
+        loading a json encoded data for update cmd
+        """
+
+        res_data = []
+        self.encoded_data = []
+
+        '''
+        if resource not in self.uuid.keys():
+            msg = ['%s uuid is empty ' % resource]
+            return False, msg
+        '''
+
+        # set a list of target uuids
+        if bool(self.cluster) is True:
+            self.do_list(resource, uuid)
+        
+        if uuid is None:
+            for i in self.uuid[resource]:
+                tmp_dict = {}
+                for key,val in i.items():
+                    tmp_dict['uuid'] = val
+                    tmp_dict[column] = status
+                    uni_dict = json.loads(json.dumps(tmp_dict))
+                    self.encoded_data.append(uni_dict)
+        else:
+            for i in self.uuid[resource]:
+                tmp_dict = {}
+                for key,val in i.items():
+                    if val == uuid:
+                        tmp_dict['uuid'] = val
+                        tmp_dict[column] = status
+                        uni_dict = json.loads(json.dumps(tmp_dict))
+                        self.encoded_data.append(uni_dict)
+
+        return len(self.encoded_data)
+
+    def _sort_data(self, order):
+
+        if order == 'install':
+            # ordering self.encoded_data = [{uuid:stat},...]
+            for i in self.encoded_data:
+                cur_idx = self.encoded_data.index(i)
+                
+                for id, val in enumerate(self.api_return_data):
+                    if i['uuid'] == self.api_return_data[id]['uuid']:
+                        roles = self.api_return_data[id]['roles']
+
+                if 'meta' in roles:
+                    self.encoded_data = self.swap(self.encoded_data, 0, cur_idx)
+                    self.api_return_data = self.swap(self.api_return_data, 0, cur_idx)
+
+                elif 'master' in roles:
+                    if 'meta' in self.api_return_data[0]['roles']:
+                        self.encoded_data = self.swap(self.encoded_data, 1, cur_idx)
+                        self.api_return_data = self.swap(self.api_return_data, 1, cur_idx)
+
+                    else:
+                        self.encoded_data = self.swap(self.encoded_data, 0, cur_idx)
+                        self.api_return_data = self.swap(self.api_return_data, 0, cur_idx)
+
+        elif order == 'uninstall':
+            for i in self.encoded_data:
+                cur_idx = self.encoded_data.index(i)
+                
+                for id, val in enumerate(self.api_return_data):
+                    if i['uuid'] == self.api_return_data[id]['uuid']:
+                        roles = self.api_return_data[id]['roles']
+
+                if 'meta' in roles:
+                    self.encoded_data = self.swap(self.encoded_data, -1, cur_idx)
+                    self.api_return_data = self.swap(self.api_return_data, -1, cur_idx)
+
+                elif 'master' in roles:
+                    if 'meta' in self.api_return_data[-1]['roles']:
+                        self.encoded_data = self.swap(self.encoded_data, -2 , cur_idx)
+                        self.api_return_data = self.swap(self.api_return_data, -2, cur_idx)
+
+                    else:
+                        self.encoded_data = self.swap(self.encoded_data, -1, cur_idx)
+                        self.api_return_data = self.swap(self.api_return_data, -1, cur_idx)
+            
+    def do_read(self, file=None):
+
+        if file is None:
+            res = os.listdir(self.tempfilepath)
+            return res
+
+        elif file == 'variable':
+            print('version : %s' % self.version)
+            print('apiserver : %s' % self.apiserver)
+            print('cluster : %s' % self.cluster)
+            print('tempfile path : %s' % self.tempfilepath)
+            print('current encoding data : %s' % self.encoded_data)
+            print('pre cmd call result : %s' % self.api_return_data)
+            for key in self.uuid.keys():
+                print('uuids[%s] : %s' % (key, self.uuid[key]))
+
+            return True
+
+        elif file is not None:
+            f = open(os.path.join(self.tempfilepath, file), 'r')
+            res = json.loads(f.read())
+
+            print json.dumps(res, indent=2, sort_keys=True)
+
+            return True
+
+
+    def do_create(self, resource, data):
+        """
+        load a resource json
+        send a POST request with json data
+        """
+        uuid_dict = {}
+        return_dict = {}
+        return_keys = ['name','uuid','return']
+        method = 'POST'
+        url_list = [
+            self.apiserver,
+            'poseidon/v1/api',
+            resource +'s'
+        ]
+        url = '/'.join(url_list)
+        code, res = self._apiClient(url, method, data)
+
+        if code >= 400:
+            for k in ['name', 'message', 'return']:
+                if k == 'return':
+                    return_dict[k] = code
+                elif k == 'message':
+                    out = 'fail(code:%s, reason:%s)' % (code, res)
+                    return_dict[k] = out
+                else:
+                    return_dict[k] = data['name']
+
+            #return False, str(res['name']), out
+            return False, return_dict
+
+        for k in return_keys:
+            if k == 'return':
+                return_dict[k] = code
+            else:
+                return_dict[k] = res[k]
+
+        uuid_dict[data['name']] = res['uuid']
+
+        if resource in self.uuid.keys():
+            self.uuid[resource].append(uuid_dict)
+        else:
+            self.uuid[resource] = []
+            self.uuid[resource].append(uuid_dict)
+
+        return True, return_dict
+
+    def do_delete(self, resource, uuid):
+        """
+        delete resource
+        """
+        return_dict = {}
+        return_keys = ['uuid','message','return']
+        method = 'DELETE'
+        url_list = [
+            self.apiserver,
+            'poseidon/v1/api',
+            resource +'s', uuid
+        ]
+        url = '/'.join(url_list)
+        code, res = self._apiClient(url, method, uuid)
+
+        if code >= 400:
+            for k in return_keys:
+                if k == 'return':
+                    return_dict[k] = code
+                elif k == 'message':
+                    out = 'Delete %s fail(code:%s, reason:%s)' % (
+                        uuid, code, res)
+                    return_dict[k] = out
+                else:
+                    return_dict[k] = uuid
+
+            return False, return_dict
+
+        for k in return_keys:
+            if k == 'return':
+                return_dict[k] = code
+            elif k == 'uuid':
+                return_dict[k] = uuid
+            else:
+                return_dict[k] = res[k]
+
+        return True, return_dict
+
+    def do_update(self, resource, data):
+
+        method = 'PUT'
+        uuid = str(data['uuid'])
+        url_list = [
+            self.apiserver, 
+            'poseidon/v1/api', 
+            resource+'s', 
+            uuid, 'status'
+        ]
+        url = '/'.join(url_list)
+        code, res = self._apiClient(url, method, data)
+
+        if code >= 400:
+            out = 'fail(code:%s, reason:%s)' % (code, res)
+            return str(data['name']), out
+
+        #self.encoded_data.remove(data)
+
+        return str(res['name']), str(res['status'])
+
+    def do_list(self, resource, uuid=None):
+
+        method = 'GET'
+        self.uuid[resource] = []
+        self.resource_type = resource
+
+        if bool(self.cluster) is True:
+            # self.cluster has values
+            if resource == 'cluster':
+                url_list = [
+                    self.apiserver,
+                    'poseidon/v1/api',
+                    resource+'s'
+                ]
+            else: 
+                url_list = [
+                    self.apiserver,
+                    'poseidon/v1/api',
+                    'clusters',
+                    self.cluster,
+                    resource+'s'
+                ]
+            if uuid is not None:
+                url_list.append(uuid)
+        else:
+            # self.cluster has not a value
+            url_list = [
+                self.apiserver,
+                'poseidon/v1/api',
+                resource+'s'
+            ]
+            if uuid is not None:
+                url_list.append(uuid)
+
+        if resource == 'cluster':
+            ret_keys = ['name','uuid','master']
+        elif resource == 'node':
+            ret_keys = ['name','uuid','status','cluster']
+        elif resource == 'component':
+            ret_keys = ['name','uuid','opts']
+
+        #if resource not in self.uuid.keys():
+
+        url = '/'.join(url_list)
+        code, res = self._apiClient(url, method, None)
+        # res is resources list in array
+        # res = [{'uuid':,...},]
+
+        val = []
+        self.api_return_data = []
+
+        if type(res) is list:
+            for i in res:
+                tmp_dict = {}
+
+                for key in ret_keys:
+                    tmp_dict[key] = str(i[key])
+                
+                if {i['name']:i['uuid']} not in self.uuid[resource]:
+                    self.uuid[resource].append({i['name']:i['uuid']})
+
+                val.append(tmp_dict)
+
+            self.api_return_data = res
+        else:
+            tmp_dict = {}
+
+            for key in ret_keys:
+                tmp_dict[key] = str(res[key])
+
+            if {res['name']:res['uuid']} not in self.uuid[resource]:
+                self.uuid[resource].append({res['name']:res['uuid']})
+
+            val.append(tmp_dict)
+
+            self.api_return_data.append(res)
+            
+        return val
+
+    def get_help(self):
+        
+        print('Poseidon Cli %s' % self.version)
+        print('>> cmd resource [args]')
+        print('')
+        print('[cmd]')
+        print('  use    : select poseidon rest api')
+        print('  set    : select cluster')
+        print('  gen    : generate json file')
+        print('  read   : read json file')
+        print('  create : create resource')
+        print('  update : update resource')
+        print('  list   : listing resource')
+        print('  delete : delete resource')
+        print('[resource]')
+        print('  cluster')
+        print('  node')
+        print('  component')
+
+
+    def validate_args(self, args, min):
+        
+        if len(args) < min:
+            self.get_help()
+            return False, ['You needs %d args' % min]
+        else:
+            return True, []
+
+
+    def readCmd(self, cmd, args):
+        """
+        Main function
+        Only seperate cmd, args, call methods
+        cmd = string
+        args = array
+        :return [True|False], res[{vales_dict},...]
+        """
+        res = []
+
+        if cmd == 'gen':
+            # To generated a json file
+            ret, out = self.validate_args(args, 1)
+
+            if ret is False:
+                file_list = self.do_read()
+                return False, out + file_list
+            else:
+                resource = args.pop(0) 
+                file = args.pop(0) 
+
+            res, out = self.generate_json(resource, file)
+
+            if res is True:
+                return True, [out]
+            else:
+                msg = '%s generation is Fail(reason:%s)' % (file, out)
+                return False, [msg]
+
+        elif cmd == 'read':
+            # Reads a json file
+            ret, out = self.validate_args(args, 1)
+
+            if ret is False:
+                file_list = self.do_read()
+                return False, out + file_list
+            else:
+                file = args.pop(0) 
+
+            self.do_read(file)
+
+            return True, []
+                
+        elif cmd == 'use':
+            # selecting api server
+            ret, out = self.validate_args(args, 1)
+
+            if ret is False:
+                return False, out
+            else:
+                resource = args.pop(0) 
+
+            apiserver = resource
+            flag, res = self.do_use(apiserver)
+            return flag, res
+
+        elif cmd == 'list':
+            """
+            list cluster 
+            list node 'cluster-id'
+            list component 'cluster-id'
+            """ 
+            ret, out = self.validate_args(args, 1)
+
+            if ret is False:
+                return False, out
+            else:
+                resource = args.pop(0) 
+
+            if len(args) > 0:
+                uuid = args.pop(0)
+            else:
+                uuid = None
+                
+            array = self.do_list(resource, uuid)
+
+            return True, array
+
+        elif cmd == 'create':
+            """
+            loading a json encoded data from json file
+            create all resource with json data
+            """
+            ret, out = self.validate_args(args, 2)
+
+            if ret is False:
+                file_list = self.do_read()
+                return False, out + file_list
+            else:
+                resource = args.pop(0) 
+                file = args.pop(0)
+
+            num_loading_data = self._load_file(file)
+
+            if len(self.encoded_data) == 0:
+                msg = 'Loading json is failed'
+                return False, [msg]
+
+            if resource != self.resource_type:
+                msg = 'Diferrence between resources (load: %s, req: %s)' %(
+                    self.resource_type, resource)
+                return False, [msg]
+
+            i = 0
+            res = []
+            end_flag = len(self.encoded_data)
+
+            while i < end_flag:
+                tmp_dict = {}
+                flag, return_dict = self.do_create(
+                    resource, self.encoded_data[0])
+                res.append(return_dict)
+
+                if flag is True:
+                    self.encoded_data.remove(self.encoded_data[0])
+
+                i += 1
+
+            self.remain_res = len(self.encoded_data)
+
+            return True, res
+
+        elif cmd == 'update':
+            """
+            updates resource status
+            """
+            uuid = None
+            ret, out = self.validate_args(args, 3)
+
+            if ret is False:
+                return False, out
+            else:
+                resource = args.pop(0) 
+
+                if len(args) == 3:
+                    uuid = args.pop(0)
+
+                col = args.pop(0)
+                stat = args.pop(0)
+
+            # if loading data is empty(when update status only)
+            # generate a data from create function returns(uuid)
+            if bool(uuid) is True:
+                res = self._load_data(resource, col, stat, uuid)
+            else:
+                res = self._load_data(resource, col, stat)
+
+            if len(self.api_return_data) == 0:
+                self.do_list(resource, uuid)
+
+            # sort a self.encoded_data 
+            # install : meta(1) -> master(2) -> minions(3)
+            # uninstall : minions(1) -> master(2) -> meta(3)
+            req_sort_stat = ['install', 'uninstall']
+
+            if stat in req_sort_stat:
+                self._sort_data(stat)
+
+            i = 0
+            end_flag = len(self.encoded_data)
+            return_val = []
+
+            while i < end_flag:
+                tmp_dict = {}
+
+                name, status = self.do_update(
+                    resource, self.encoded_data[0])
+                tmp_dict[name] = status
+
+                return_val.append(tmp_dict)
+
+                self.encoded_data.remove(self.encoded_data[0])
+                i += 1
+
+            self.remain_res = len(self.encoded_data)
+
+            return True, return_val
+
+        elif cmd == 'delete':
+
+            res = []
+            ret, out = self.validate_args(args, 1)
+
+            if ret is False:
+                return False, out
+            else:
+                resource = args.pop(0) 
+
+                if len(args) > 0:
+                    # if you has uuid
+                    uuid = args.pop(0)
+                    uuid_list = self.do_list(resource, uuid)
+                else:
+                    uuid_list = self.do_list(resource)
+                
+            for uuid_arg in uuid_list:
+                tmp_dict = {}
+
+                #flag, msg = self.do_delete(
+                #    resource, str(uuid_arg['uuid']))
+                #tmp_dict[str(uuid_arg['name'])] = msg
+                flag, return_dict = self.do_delete(
+                    resource, str(uuid_arg['uuid']))
+
+                res.append(return_dict)
+
+                if flag is True:
+                    self.uuid[resource].remove(
+                        {uuid_arg['name']:uuid_arg['uuid']})
+            
+            return True, res
+            
+        elif cmd == 'set':
+
+            ret, out = self.validate_args(args, 2)
+
+            if ret is False:
+                return False, out
+            else:
+                resource = args.pop(0) 
+                uuid = args.pop(0)
+                
+            res, out = self.set_resource(resource, uuid)
+
+            return res, out
+
+        elif cmd == 'unset':
+
+            ret, out = self.validate_args(args, 1)
+
+            if ret is False:
+                return False, out
+            else:
+                resource = args.pop(0) 
+
+            res, out = self.unset_resource(resource)
+
+            return res, out
+
+        elif cmd == 'help':
+
+            self.get_help()
+
+            return True, []
+
+        else:
+
+            self.get_help()
+            out = 'cmd(%s) is not in cmdlist or typo' % cmd
+
+            return False, [out]
+
+
+class SimpleCompleter(object):
+    
+    def __init__(self, options):
+        self.options = sorted(options)
+        return
+
+    def complete(self, text, state):
+        response = None
+        if state == 0:
+            # This is the first time for this text, so build a match list.
+            if text:
+                self.matches = [s 
+                                for s in self.options
+                                if s and s.startswith(text)]
+                print('%s matches: %s', repr(text), self.matches)
+            else:
+                self.matches = self.options[:]
+                print('(empty input) matches: %s', self.matches)
+        
+        # Return the state'th item from the match list,
+        # if we have that many.
+        try:
+            response = self.matches[state]
+        except IndexError:
+            response = None
+        print('complete(%s, %s) => %s', 
+                      repr(text), state, repr(response))
+        return response
+
+
+def signal_handler(signal, frame):
+    print('Ouch! Bye~')
+    sys.exit(0)
+
+def display(res, out):
+
+    if len(out) == 0:
+        pass
+    elif type(out[0]) is dict:
+        print tabulate(out, headers="keys", tablefmt="grid")
+    else:
+        print tabulate([out], tablefmt="grid")
+
+    print('res: %s' % res)
+    '''
+    for i in out:
+        print('out: %s' % (i))
+    '''
+
+def display_warn(res):
+    print('WARN: There a some resouces remains(%d)' % res)
+
+def usage():
+    print('cmd args')
+
+if __name__=='__main__':
+
+    if len(sys.argv) == 1:
+
+        cli = CliBase()
+        cmd_list = [
+            'create',
+            'update',
+            'delete',
+            'list',
+            'gen',
+            'use',
+            'read'
+            ]
+        out = []
+
+        readline.set_completer(SimpleCompleter(cmd_list).complete)
+        readline.parse_and_bind('tab: complete')
+
+        while True:
+            if bool(cli.cluster) is True:
+                prompt = "%s(%s)>> " %(cli.apiserver, cli.cluster)
+            else:
+                prompt = "%s>> " %(cli.apiserver)
+
+            signal.signal(signal.SIGINT, signal_handler)
+            tmp_cmd = raw_input(prompt)
+            input_cmd = tmp_cmd.strip().split(' ')
+
+            if input_cmd[0].strip() == 'exit':
+                print('Bye~!')
+                sys.exit(1)
+
+            else:
+                cmd = input_cmd[0]
+                args = input_cmd[1:]
+
+                if cmd == '':
+                    continue
+
+            try:
+                res, out = cli.readCmd(cmd, args)
+
+            except Exception as e:
+                print('Hello Errors')
+                print('%s' % traceback.print_exc())
+            
+            else:
+                display(res, out)
+
+                if cli.remain_res > 0:
+                    display_warn(cli.remain_res)
+    else:
+        pass
+

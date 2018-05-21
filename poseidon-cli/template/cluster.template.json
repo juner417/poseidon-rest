@@ -1,0 +1,21 @@
+{
+    "name": "HOST",
+    "master" : "IP",
+    "port" : "8080",
+    "proxy" : "HOST",
+    "cluster_engine" : "kubernetes",
+    "platform_info" : {
+        "platform": "openstack", 
+        "os": "ubuntu-14.04", 
+        "account" : "ubuntu", 
+        "registry" : "REGISTRY",
+        "box_version" : "VERSION"
+    },
+    "network_info" : {"Network":"172.16.0.0/16", "Backend": {"Type": "host-gw"} },
+    "metas" : ["10.10.10.3:4001"], 
+    "capacity_info": {
+        "cpu" : "40",
+        "memory" : "80", 
+        "nodes" : "5" },
+    "tags" : "test"
+}
